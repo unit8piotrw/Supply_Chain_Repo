@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 
 from pyspark.sql import SparkSession, Row
-from pyspark.sql.functions import udf, col
+from pyspark.sql.functions import udf, col, date_format, month, year, count
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType, DateType, FloatType
 
 import string
@@ -15,6 +15,9 @@ import random
 from faker import Faker
 from datetime import datetime, timedelta
 import configparser
+
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 fake = Faker('de_CH')
 Faker.seed(42)
@@ -112,7 +115,7 @@ finished_goods_df.show()
 
 def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
     """
-    Creates a PySpark DataFrame with customer order data.
+    Creates a PySpark DataFrame with customer order data including a Date column with seasonal likelihoods.
     
     Args:
         num_orders (int): The number of orders to generate.
@@ -120,7 +123,7 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
         finished_goods_df (DataFrame): A DataFrame containing finished goods data
 
     Returns:
-        DataFrame: A PySpark DataFrame with columns 'OrderID', 'CustomerID', 'productID', and 'demandCategory'.
+        DataFrame: A PySpark DataFrame with columns 'OrderID', 'CustomerID', 'productID', 'demandCategory', and 'Date'.
     """
     # Extracting customer IDs from customers_df
     customer_ids = [row['Customer ID'] for row in customers_df.collect()]
@@ -133,40 +136,53 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
         return demand_weights[category] / total_demand_weight
     udf_calculate_sale_probability = udf(calculate_sale_probability, FloatType())
 
-    # Add saleProbability column to finished_goods_df
+    # Adding saleProbability column to finished_goods_df
     finished_goods_df = finished_goods_df.withColumn(
         "saleProbability",
         udf_calculate_sale_probability(col("demandCategory"))
     )
 
-    # Collect product IDs and their sale probabilities
+    # Collecting product IDs and their sale probabilities
     product_data = finished_goods_df.select("productID", "saleProbability", "demandCategory").collect()
     product_ids = [row['productID'] for row in product_data]
     sale_probabilities = [row['saleProbability'] for row in product_data]
 
-    # Generate order data
+    def generate_seasonal_date():
+        today = datetime.today()
+        start_date = today.replace(year=today.year - 3)  # Start from 3 years ago
+        end_date = today
+        date_generated = start_date + (end_date - start_date) * random.random()
+        
+        # seasons by month (spring: 3-5, summer: 6-8, autumn: 9-11, winter: 12-2)
+        month = date_generated.month
+        if month in [3, 4, 5, 9, 10, 11]:  # Spring and autumn
+            return date_generated if random.random() < 0.70 else generate_seasonal_date()
+        elif month in [6, 7, 8, 12, 1, 2]:  # Summer and winter
+            return date_generated if random.random() < 0.30 else generate_seasonal_date()
+        else:
+            return date_generated
+
+    # Generate order data with seasonal dates
     orders_data = []
     for order_id in range(1, num_orders + 1):
         customer_id = random.choice(customer_ids)
         product_id = random.choices(product_ids, weights=sale_probabilities, k=1)[0]
         # Finding the demandCategory for the selected product_id
         demand_category = next(row['demandCategory'] for row in product_data if row['productID'] == product_id)
-        orders_data.append((order_id, customer_id, product_id, demand_category))
+        order_date = generate_seasonal_date()
+        orders_data.append((order_id, customer_id, product_id, demand_category, order_date))
 
-    # Create DataFrame
-    orders_schema = ["OrderID", "CustomerID", "productID", "demandCategory"]
+    orders_schema = ["OrderID", "CustomerID", "productID", "demandCategory", "Date"]
     customer_orders_df = spark.createDataFrame(orders_data, schema=orders_schema)
+    customer_orders_df = customer_orders_df.withColumn('Date', date_format(col('Date'), 'yyyy-MM-dd'))
 
     return customer_orders_df
-
 
 num_orders = 1000
 customer_orders_df = create_customer_orders_df(num_orders, customers_df, finished_goods_df)
 customer_orders_df.show()
 
 # COMMAND ----------
-
-import matplotlib.pyplot as plt
 
 # Checking if the orders were made correctly
 demand_category_counts = customer_orders_df.groupBy('demandCategory').count().orderBy('count', ascending=False)
@@ -180,6 +196,39 @@ plt.ylabel('Number of Orders')
 plt.title('Number of Orders by Demand Category')
 plt.xticks(rotation=45)
 plt.tight_layout()
+plt.show()
+
+# COMMAND ----------
+
+# Group by year and month and count the number of orders
+monthly_order_counts = customer_orders_df.withColumn('Year', year('Date')) \
+                                        . withColumn('Month', month('Date')) \
+                                        . groupBy('Year', 'Month') \
+                                        . agg(count('OrderID').alias('OrderCount')) \
+                                        . orderBy('Year', 'Month')
+
+# Convert to Pandas DataFrame for plotting
+monthly_order_counts_pd = monthly_order_counts.toPandas()
+
+# Combine year and month into a single datetime object for plotting
+monthly_order_counts_pd['Date'] = pd.to_datetime(monthly_order_counts_pd[['Year', 'Month']].assign(DAY=1))
+
+# Create the plot
+plt.figure(figsize=(12, 6))
+plt.plot(monthly_order_counts_pd['Date'], monthly_order_counts_pd['OrderCount'], marker='o', linestyle='-')
+
+# Formatting the x-axis to show dates in monthly increments
+plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+plt.gcf().autofmt_xdate()  # Rotation
+
+# Labels and title
+plt.xlabel('Date (Monthly Increments)')
+plt.ylabel('Order Count')
+plt.title('Order Count by Month')
+plt.grid(True)
+
+# Show the plot
 plt.show()
 
 # COMMAND ----------
