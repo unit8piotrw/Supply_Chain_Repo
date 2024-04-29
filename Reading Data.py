@@ -26,3 +26,23 @@ df = spark.read.format("jdbc") \
     .load()
 
 df.show(5)
+
+# COMMAND ----------
+
+container_name = "supplychainblob"
+storage_account = "supplychaindemo"
+sas_token = config.get("credentials", "sas", raw=True)
+print(sas_token)
+blob_url = "wasbs://" + container_name + "@" + storage_account + ".blob.core.windows.net/"
+
+"""
+dbutils.fs.mount(
+    source=blob_url,
+    mount_point="/mnt/demo",
+    extra_configs={"fs.azure.sas." + container_name + "." + storage_account + ".blob.core.windows.net": sas_token}
+)
+"""
+
+# COMMAND ----------
+
+df.write.mode("overwrite").json(("/mnt/demo/first_df.json"))
