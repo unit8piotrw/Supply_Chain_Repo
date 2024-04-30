@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 
 from pyspark.sql import SparkSession, Row
-from pyspark.sql.functions import udf, col, date_format, month, year, count
+from pyspark.sql.functions import udf, col, date_format, month, year, count, monotonically_increasing_id
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType, DateType, FloatType
 
 import string
@@ -44,8 +44,8 @@ jdbcUrl = f"jdbc:sqlserver://supply-chain-demo-db.database.windows.net:1433;data
 
 def create_customers_df(num_customers):
     """
-    Creates a PySpark DataFrame with fake customer data.
-    Assumes PySpark and Faker are already initialized
+    Creates a PySpark DataFrame with simulated customer data.
+
     Args:
         num_customers (int): The number of customers to generate.
     Returns:
@@ -68,7 +68,7 @@ customers_df.show(20)
 
 def create_final_goods_df(num_products):
     """
-    Creates a PySpark DataFrame with fake product data.
+    Creates a PySpark DataFrame with simulated product data.
     
     Args:
         num_products (int): The number of products to generate.
@@ -114,8 +114,8 @@ finished_goods_df.show()
 
 def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
     """
-    Creates a PySpark DataFrame with customer order data including a Date column with seasonal likelihoods.
-    
+    Creates a PySpark DataFrame with customer order data
+
     Args:
         num_orders (int): The number of orders to generate.
         customers_df (DataFrame): A DataFrame containing customer data.
@@ -168,7 +168,6 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
         probability_closed = min(10 + 15 * months_difference, 100)  # Ensuring it does not exceed 100%
         return 'closed' if random.random() < (probability_closed / 100.0) else 'open'
 
-    # Register the UDF
     udf_calculate_status = udf(calculate_status, StringType())
 
     # Generate order data with seasonal dates
@@ -184,6 +183,8 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
     orders_schema = ["OrderID", "CustomerID", "productID", "demandCategory", "Date"]
     customer_orders_df = spark.createDataFrame(orders_data, schema=orders_schema)
     customer_orders_df = customer_orders_df.withColumn('status', udf_calculate_status(col('Date')))
+
+    # Changing the date format
     customer_orders_df = customer_orders_df.withColumn('Date', date_format(col('Date'), 'yyyy-MM-dd'))
 
     return customer_orders_df
@@ -258,6 +259,123 @@ sorted_customer_orders_df = customer_orders_df.orderBy(col('Date').desc())
 
 # Display the sorted DataFrame
 sorted_customer_orders_df.show()
+
+# COMMAND ----------
+
+# Creating the manufacturing process dataframe (not super impactful table tbh)
+from pyspark.sql.functions import row_number
+from pyspark.sql.window import Window
+
+def create_manufacturing_process_df(finished_goods_df):
+    """
+    Creates a PySpark DataFrame representing the manufacturing process for finished goods.
+
+    Args:
+        finished_goods_df (DataFrame): A PySpark DataFrame containing finished goods data with a 'productID' column.
+
+    Returns:
+        DataFrame: A PySpark DataFrame with columns 'ProcessID', 'productID', and 'FacilityID'.
+    """
+    windowSpec = Window.orderBy("productID")
+    manufacturing_process_df = finished_goods_df.withColumn("ProcessID", row_number().over(windowSpec))
+
+    # Selecting only the 'productID' and 'ProcessID' columns
+    manufacturing_process_df = manufacturing_process_df.select(col("ProcessID"), col("productID"))
+
+    # Creating a UDF which generates random facilities
+    def random_facility_id():
+        return f"Facility {random.randint(1, 4)}"
+    udf_random_facility_id = udf(random_facility_id, StringType())
+
+    # Adds the 'FacilityID' column using the UDF
+    manufacturing_process_df = manufacturing_process_df.withColumn("FacilityID", udf_random_facility_id())
+
+    return manufacturing_process_df
+
+manufacturing_process_df = create_manufacturing_process_df(finished_goods_df)
+manufacturing_process_df.show()
+
+# COMMAND ----------
+
+# We will have to add more to this function as we expand into the supplier domain (basically just assign a random supplier to each material)
+
+def create_material_master_df(num_materials, mean):
+    """
+    Creates material master dataframe
+
+    Args:
+        num_materials (int): The number of unique materials to generate.
+        mean (int): The mean value for the normal distribution of material inventory.
+
+    Returns:
+        DataFrame: A PySpark DataFrame with columns 'Material ID', 'SKU', and 'Material Inventory'.
+    """
+
+    # Material SKU function
+    def generate_sku():
+        letters = ''.join(random.choice(string.ascii_uppercase) for _ in range(1))
+        numbers = ''.join(random.choice(string.digits) for _ in range(7))
+        return letters + numbers
+
+    # Generate unique SKUs for each material
+    material_names = [generate_sku() for _ in range(num_materials)]
+    
+    # Generating material inventory available using a normal distribution around the specified mean
+    std_dev = 300
+    material_available = np.random.normal(loc=mean, scale=std_dev, size=num_materials).astype(int).tolist()
+
+    material_master_df = spark.createDataFrame(
+        [(i + 1, material_names[i], max(0, material_available[i])) for i in range(num_materials)], 
+        ['Material ID', 'SKU', 'Material Inventory']
+    )
+    
+    return material_master_df
+
+num_materials = 100
+mean = 700
+material_master_df = create_material_master_df(num_materials, mean)
+material_master_df.show()
+
+# COMMAND ----------
+
+def create_manufacturing_process_parts_df(manufacturing_process_df, material_master_df):
+    """
+    Creates a DataFrame with manufacturing process parts and assigns a random material to each part.
+
+    Args:
+        manufacturing_process_df (DataFrame): DataFrame containing manufacturing process data with 'ProcessID'.
+        material_master_df (DataFrame): DataFrame containing material master data with 'MaterialID'.
+
+    Returns:
+        DataFrame: DataFrame with 'Process ID', 'Process Part ID', 'MaterialID' and 'Quantity' for each part in the manufacturing process.
+    """
+    
+    # Collect material IDs into a list
+    material_ids = [row['Material ID'] for row in material_master_df.collect()]
+    
+    process_part_data = []
+    # Iterating through each row (process) in the manufacturing_process_df DataFrame
+    for row in manufacturing_process_df.collect():
+        process_id = row['ProcessID']
+        num_parts = random.randint(2, 4) # Choosing how many parts each manufacturing process should have
+
+        # random materials for the process, ensuring they are unique within the process
+        materials_for_process = random.sample(material_ids, num_parts)
+        for part_num in range(num_parts):
+            process_part_id = f"{process_id}_{part_num + 1}"
+            material_id = materials_for_process[part_num]
+            quantity = random.randint(1, 5)  # Random quantity between 1 and 5
+            process_part_data.append((process_id, process_part_id, material_id, quantity))
+    
+    # Define the schema for the new DataFrame
+    schema = ['Process ID', 'Process Part ID', 'MaterialID', "Quantity"]
+    manufacturing_process_parts_df = spark.createDataFrame(process_part_data, schema)
+    
+    return manufacturing_process_parts_df
+
+manufacturing_process_parts_df = create_manufacturing_process_parts_df(manufacturing_process_df, material_master_df)
+manufacturing_process_parts_df.show()
+
 
 # COMMAND ----------
 
