@@ -133,6 +133,7 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
 
     def calculate_sale_probability(category):
         return demand_weights[category] / total_demand_weight
+    # Creating a pyspark udf so that we can apply it to a whole column
     udf_calculate_sale_probability = udf(calculate_sale_probability, FloatType())
 
     # Adding saleProbability column to finished_goods_df
@@ -148,7 +149,7 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
 
     def generate_seasonal_date():
         today = datetime.today()
-        start_date = today.replace(year=today.year - 3)  # Start from 3 years ago
+        start_date = today.replace(year=today.year - 3)  # 3 years ago is the start point
         end_date = today
         date_generated = start_date + (end_date - start_date) * random.random()
         
@@ -160,6 +161,15 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
             return date_generated if random.random() < 0.30 else generate_seasonal_date()
         else:
             return date_generated
+
+    def calculate_status(order_date):
+        today = datetime.today()
+        months_difference = (today.year - order_date.year) * 12 + today.month - order_date.month
+        probability_closed = min(10 + 15 * months_difference, 100)  # Ensuring it does not exceed 100%
+        return 'closed' if random.random() < (probability_closed / 100.0) else 'open'
+
+    # Register the UDF
+    udf_calculate_status = udf(calculate_status, StringType())
 
     # Generate order data with seasonal dates
     orders_data = []
@@ -173,11 +183,12 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
 
     orders_schema = ["OrderID", "CustomerID", "productID", "demandCategory", "Date"]
     customer_orders_df = spark.createDataFrame(orders_data, schema=orders_schema)
+    customer_orders_df = customer_orders_df.withColumn('status', udf_calculate_status(col('Date')))
     customer_orders_df = customer_orders_df.withColumn('Date', date_format(col('Date'), 'yyyy-MM-dd'))
 
     return customer_orders_df
 
-num_orders = 1000
+num_orders = 10000
 customer_orders_df = create_customer_orders_df(num_orders, customers_df, finished_goods_df)
 customer_orders_df.show()
 
@@ -223,6 +234,30 @@ plt.title('Order Count by Month')
 plt.grid(True)
 
 plt.show()
+
+# COMMAND ----------
+
+
+monthly_status_counts = customer_orders_df.groupBy(month('Date').alias('Month'), 'status').count()
+open_orders_by_month = monthly_status_counts.filter(monthly_status_counts.status == 'open').orderBy('Month')
+open_orders_by_month_pd = open_orders_by_month.toPandas()
+
+# Plotting
+plt.figure(figsize=(10, 6))
+plt.bar(open_orders_by_month_pd['Month'], open_orders_by_month_pd['count'], color='skyblue')
+plt.xlabel('Month')
+plt.ylabel('Count of Open Orders')
+plt.title('Open Orders by Month')
+plt.xticks(open_orders_by_month_pd['Month'])  # Ensure x-ticks are for each month
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+plt.show()
+
+# COMMAND ----------
+
+sorted_customer_orders_df = customer_orders_df.orderBy(col('Date').desc())
+
+# Display the sorted DataFrame
+sorted_customer_orders_df.show()
 
 # COMMAND ----------
 
