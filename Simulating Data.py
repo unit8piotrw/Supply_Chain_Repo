@@ -367,9 +367,7 @@ def create_manufacturing_process_parts_df(manufacturing_process_df, material_mas
             quantity = random.randint(1, 5)  # Random quantity between 1 and 5
             process_part_data.append((process_id, process_part_id, material_id, quantity))
     
-    # Define the schema for the new DataFrame
-    schema = ['Process ID', 'Process Part ID', 'MaterialID', "Quantity"]
-    manufacturing_process_parts_df = spark.createDataFrame(process_part_data, schema)
+    manufacturing_process_parts_df = spark.createDataFrame(process_part_data, ['Process ID', 'Process Part ID', 'MaterialID', "Quantity"])
     
     return manufacturing_process_parts_df
 
@@ -381,15 +379,60 @@ manufacturing_process_parts_df.show()
 
 # Writing data in the database (at end)
 
-"""
-table = "table1"
+tables = ["customers", "customer_orders", "finished_goods", "manufacturing_processes", "manufacturing_process_parts", "material_master"]
+
 customers_df.write \
    . format("jdbc") \
    . option("url", jdbcUrl) \
-   . option("dbtable", table) \
+   . option("dbtable", tables[0]) \
    . option("user", username) \
    . option("password", password) \
    . mode("overwrite") \
    . save()
 
-"""
+customer_orders_df.write \
+   . format("jdbc") \
+   . option("url", jdbcUrl) \
+   . option("dbtable", tables[1]) \
+   . option("user", username) \
+   . option("password", password) \
+   . mode("overwrite") \
+   . save()
+
+finished_goods_df.write \
+   . format("jdbc") \
+   . option("url", jdbcUrl) \
+   . option("dbtable", tables[2]) \
+   . option("user", username) \
+   . option("password", password) \
+   . mode("overwrite") \
+   . save()
+
+manufacturing_process_df.write \
+   . format("jdbc") \
+   . option("url", jdbcUrl) \
+   . option("dbtable", tables[3]) \
+   . option("user", username) \
+   . option("password", password) \
+   . mode("overwrite") \
+   . save()
+
+manufacturing_process_parts_df.write \
+   . format("jdbc") \
+   . option("url", jdbcUrl) \
+   . option("dbtable", tables[4]) \
+   . option("user", username) \
+   . option("password", password) \
+   . mode("overwrite") \
+   . save()
+
+material_master_df.write \
+   . format("jdbc") \
+   . option("url", jdbcUrl) \
+   . option("dbtable", tables[5]) \
+   . option("user", username) \
+   . option("password", password) \
+   . mode("overwrite") \
+   . save()
+
+
