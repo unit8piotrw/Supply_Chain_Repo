@@ -51,7 +51,7 @@ def create_customers_df(num_customers):
     Returns:
         DataFrame: A PySpark DataFrame with columns 'Customer ID', 'Address', and 'Company Name'.
     """
-    # Generate fake customer data
+    # fake customer data
     customer_data = []
     for x in range(num_customers):
         tup = (str(x), fake.address(), fake.company())
@@ -76,28 +76,27 @@ def create_final_goods_df(num_products):
     Returns:
         DataFrame: A PySpark DataFrame with columns 'productID', 'productSKU', 'inventory', 'demandCategory'.
     """
-    # Define product categories and their likelihood of sale (1 being sold most frequently)
+    # Defining product categories and their likelihood of sale (1 being sold most frequently)
     demand_categories = {1: 'Very High', 2: 'High', 3: 'Medium', 4: 'Low', 5: 'Very Low'}
     
-    # Define base inventory levels based on the demand category (arbitrary scale)
+    # Defining base inventory levels based on the demand category (arbitrary scale)
     base_inventory_levels = {1: 100, 2: 80, 3: 60, 4: 40, 5: 20}
 
-    # Function to generate a random SKU
+    # Random SKU function
     def generate_sku():
         letters = ''.join(random.choice(string.ascii_uppercase) for _ in range(2))
         numbers = ''.join(random.choice(string.digits) for _ in range(6))
         return letters + numbers
 
-    # Generate product data with random inventory within the trend
     products_data = []
     for product_id in range(1, num_products + 1):
-        # Randomly choose a demand category for the product
+        # choosing a demand category for the product (randomly for now?)
         category = random.choice(list(demand_categories.keys()))
         base_inventory = base_inventory_levels[category]
-        # Randomize inventory within a range, maintaining the trend
+        # Randomizing inventory within a range, maintaining the trend
         inventory = random.randint(int(base_inventory * 0.7), int(base_inventory * 1.3))
         category_name = demand_categories[category]  # Get the category name as a string
-        # Generate random SKU for the product
+        # making a random SKU for the product
         product_sku = generate_sku()
         products_data.append(Row(productID=product_id, productSKU=product_sku, inventory=inventory, demandCategory=category_name))
 
@@ -128,12 +127,13 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
     # Extracting customer IDs from customers_df
     customer_ids = [row['Customer ID'] for row in customers_df.collect()]
 
-    # Calculate sale probabilities based on demandCategory
+    # Calculating sale probabilities based on demandCategory
     demand_weights = {'Very High': 5, 'High': 4, 'Medium': 3, 'Low': 2, 'Very Low': 1}
     total_demand_weight = sum(demand_weights.values())
 
     def calculate_sale_probability(category):
         return demand_weights[category] / total_demand_weight
+    # Creating a pyspark udf so that we can apply it to a whole column
     udf_calculate_sale_probability = udf(calculate_sale_probability, FloatType())
 
     # Adding saleProbability column to finished_goods_df
@@ -149,11 +149,11 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
 
     def generate_seasonal_date():
         today = datetime.today()
-        start_date = today.replace(year=today.year - 3)  # Start from 3 years ago
+        start_date = today.replace(year=today.year - 3)  # 3 years ago is the start point
         end_date = today
         date_generated = start_date + (end_date - start_date) * random.random()
         
-        # seasons by month (spring: 3-5, summer: 6-8, autumn: 9-11, winter: 12-2)
+        # seasons by month
         month = date_generated.month
         if month in [3, 4, 5, 9, 10, 11]:  # Spring and autumn
             return date_generated if random.random() < 0.70 else generate_seasonal_date()
@@ -161,6 +161,15 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
             return date_generated if random.random() < 0.30 else generate_seasonal_date()
         else:
             return date_generated
+
+    def calculate_status(order_date):
+        today = datetime.today()
+        months_difference = (today.year - order_date.year) * 12 + today.month - order_date.month
+        probability_closed = min(10 + 15 * months_difference, 100)  # Ensuring it does not exceed 100%
+        return 'closed' if random.random() < (probability_closed / 100.0) else 'open'
+
+    # Register the UDF
+    udf_calculate_status = udf(calculate_status, StringType())
 
     # Generate order data with seasonal dates
     orders_data = []
@@ -174,11 +183,12 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
 
     orders_schema = ["OrderID", "CustomerID", "productID", "demandCategory", "Date"]
     customer_orders_df = spark.createDataFrame(orders_data, schema=orders_schema)
+    customer_orders_df = customer_orders_df.withColumn('status', udf_calculate_status(col('Date')))
     customer_orders_df = customer_orders_df.withColumn('Date', date_format(col('Date'), 'yyyy-MM-dd'))
 
     return customer_orders_df
 
-num_orders = 1000
+num_orders = 10000
 customer_orders_df = create_customer_orders_df(num_orders, customers_df, finished_goods_df)
 customer_orders_df.show()
 
@@ -188,7 +198,7 @@ customer_orders_df.show()
 demand_category_counts = customer_orders_df.groupBy('demandCategory').count().orderBy('count', ascending=False)
 demand_category_counts_pd = demand_category_counts.toPandas()
 
-# Create the bar plot
+# creating bar plt
 plt.figure(figsize=(10, 6))
 plt.bar(demand_category_counts_pd['demandCategory'], demand_category_counts_pd['count'], color='skyblue')
 plt.xlabel('Demand Category')
@@ -200,20 +210,16 @@ plt.show()
 
 # COMMAND ----------
 
-# Group by year and month and count the number of orders
+# Grouping by year and month and count the number of orders
 monthly_order_counts = customer_orders_df.withColumn('Year', year('Date')) \
                                         . withColumn('Month', month('Date')) \
                                         . groupBy('Year', 'Month') \
                                         . agg(count('OrderID').alias('OrderCount')) \
                                         . orderBy('Year', 'Month')
 
-# Convert to Pandas DataFrame for plotting
 monthly_order_counts_pd = monthly_order_counts.toPandas()
-
-# Combine year and month into a single datetime object for plotting
 monthly_order_counts_pd['Date'] = pd.to_datetime(monthly_order_counts_pd[['Year', 'Month']].assign(DAY=1))
 
-# Create the plot
 plt.figure(figsize=(12, 6))
 plt.plot(monthly_order_counts_pd['Date'], monthly_order_counts_pd['OrderCount'], marker='o', linestyle='-')
 
@@ -222,14 +228,36 @@ plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
 plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval=1))
 plt.gcf().autofmt_xdate()  # Rotation
 
-# Labels and title
 plt.xlabel('Date (Monthly Increments)')
 plt.ylabel('Order Count')
 plt.title('Order Count by Month')
 plt.grid(True)
 
-# Show the plot
 plt.show()
+
+# COMMAND ----------
+
+
+monthly_status_counts = customer_orders_df.groupBy(month('Date').alias('Month'), 'status').count()
+open_orders_by_month = monthly_status_counts.filter(monthly_status_counts.status == 'open').orderBy('Month')
+open_orders_by_month_pd = open_orders_by_month.toPandas()
+
+# Plotting
+plt.figure(figsize=(10, 6))
+plt.bar(open_orders_by_month_pd['Month'], open_orders_by_month_pd['count'], color='skyblue')
+plt.xlabel('Month')
+plt.ylabel('Count of Open Orders')
+plt.title('Open Orders by Month')
+plt.xticks(open_orders_by_month_pd['Month'])  # Ensure x-ticks are for each month
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+plt.show()
+
+# COMMAND ----------
+
+sorted_customer_orders_df = customer_orders_df.orderBy(col('Date').desc())
+
+# Display the sorted DataFrame
+sorted_customer_orders_df.show()
 
 # COMMAND ----------
 
