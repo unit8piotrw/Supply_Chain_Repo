@@ -57,7 +57,7 @@ def create_customers_df(num_customers):
         tup = (str(x), fake.address(), fake.company())
         customer_data.append(tup)
 
-    customers_df = spark.createDataFrame(customer_data, ['Customer ID', 'Address', 'Company Name'])
+    customers_df = spark.createDataFrame(customer_data, ['CustomerID', 'Address', 'CompanyName'])
 
     return customers_df
 
@@ -125,7 +125,7 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
         DataFrame: A PySpark DataFrame with columns 'OrderID', 'CustomerID', 'productID', 'demandCategory', and 'Date'.
     """
     # Extracting customer IDs from customers_df
-    customer_ids = [row['Customer ID'] for row in customers_df.collect()]
+    customer_ids = [row['CustomerID'] for row in customers_df.collect()]
 
     # Calculating sale probabilities based on demandCategory
     demand_weights = {'Very High': 5, 'High': 4, 'Medium': 3, 'Low': 2, 'Very Low': 1}
@@ -165,9 +165,15 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
     def calculate_status(order_date):
         today = datetime.today()
         months_difference = (today.year - order_date.year) * 12 + today.month - order_date.month
-        probability_closed = min(10 + 15 * months_difference, 100)  # Ensuring it does not exceed 100%
+        probability_closed = min(40 + 20 * months_difference, 100)  # Ensuring it does not exceed 100%
         return 'closed' if random.random() < (probability_closed / 100.0) else 'open'
 
+    def calculate_max_delivery_date(order_date):
+        contract_max_delivery_time = 90
+        max_delivery_date = order_date + timedelta(days=contract_max_delivery_time)
+        return max_delivery_date
+    
+    udf_calculate_max_delivery_date = udf(calculate_max_delivery_date, DateType())
     udf_calculate_status = udf(calculate_status, StringType())
 
     # Generate order data with seasonal dates
@@ -180,13 +186,15 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
         order_date = generate_seasonal_date()
         orders_data.append((order_id, customer_id, product_id, demand_category, order_date))
 
-    orders_schema = ["OrderID", "CustomerID", "productID", "demandCategory", "Date"]
+    orders_schema = ["OrderID", "CustomerID", "productID", "demandCategory", "OrderDate"]
     customer_orders_df = spark.createDataFrame(orders_data, schema=orders_schema)
-    customer_orders_df = customer_orders_df.withColumn('status', udf_calculate_status(col('Date')))
+    customer_orders_df = customer_orders_df.withColumn('status', udf_calculate_status(col('OrderDate')))
+    customer_orders_df = customer_orders_df.withColumn('max_delivery_date', udf_calculate_max_delivery_date(col('OrderDate')))
+
 
     # Changing the date format
-    customer_orders_df = customer_orders_df.withColumn('Date', date_format(col('Date'), 'yyyy-MM-dd'))
-
+    customer_orders_df = customer_orders_df.withColumn('Date', date_format(col('OrderDate'), 'yyyy-MM-dd'))
+    customer_orders_df = customer_orders_df.withColumn('max_delivery_date', date_format(col('max_delivery_date'), 'yyyy-MM-dd'))
     return customer_orders_df
 
 num_orders = 10000
@@ -263,7 +271,7 @@ sorted_customer_orders_df.show()
 # COMMAND ----------
 
 # Creating the manufacturing process dataframe (not super impactful table tbh)
-from pyspark.sql.functions import row_number
+from pyspark.sql.functions import row_number, expr
 from pyspark.sql.window import Window
 
 def create_manufacturing_process_df(finished_goods_df):
@@ -287,8 +295,13 @@ def create_manufacturing_process_df(finished_goods_df):
         return f"Facility {random.randint(1, 4)}"
     udf_random_facility_id = udf(random_facility_id, StringType())
 
+    def random_processing_time():
+        return random.randint(3,5)
+    udf_random_processing_time = udf(random_processing_time, IntegerType())
     # Adds the 'FacilityID' column using the UDF
     manufacturing_process_df = manufacturing_process_df.withColumn("FacilityID", udf_random_facility_id())
+    # Adds the 'processing_time' column with a random number of days (3 to 5) added to the current date
+    manufacturing_process_df = manufacturing_process_df.withColumn("processing_time", udf_random_processing_time())
 
     return manufacturing_process_df
 
@@ -326,7 +339,7 @@ def create_material_master_df(num_materials, mean):
 
     material_master_df = spark.createDataFrame(
         [(i + 1, material_names[i], max(0, material_available[i])) for i in range(num_materials)], 
-        ['Material ID', 'SKU', 'Material Inventory']
+        ['MaterialID', 'SKU', 'MaterialInventory']
     )
     
     return material_master_df
@@ -351,7 +364,7 @@ def create_manufacturing_process_parts_df(manufacturing_process_df, material_mas
     """
     
     # Collect material IDs into a list
-    material_ids = [row['Material ID'] for row in material_master_df.collect()]
+    material_ids = [row['MaterialID'] for row in material_master_df.collect()]
     
     process_part_data = []
     # Iterating through each row (process) in the manufacturing_process_df DataFrame
@@ -367,7 +380,7 @@ def create_manufacturing_process_parts_df(manufacturing_process_df, material_mas
             quantity = random.randint(1, 5)  # Random quantity between 1 and 5
             process_part_data.append((process_id, process_part_id, material_id, quantity))
     
-    manufacturing_process_parts_df = spark.createDataFrame(process_part_data, ['Process ID', 'Process Part ID', 'MaterialID', "Quantity"])
+    manufacturing_process_parts_df = spark.createDataFrame(process_part_data, ['ProcessID', 'ProcessPartID', 'MaterialID', "Quantity"])
     
     return manufacturing_process_parts_df
 
