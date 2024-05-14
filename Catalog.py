@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %sql
-# MAGIC CREATE DATABASE IF NOT EXISTS supply_chain_bronze
+# MAGIC CREATE DATABASE IF NOT EXISTS supply_chain_gold
 
 # COMMAND ----------
 

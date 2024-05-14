@@ -49,3 +49,10 @@ def fill_empty_fields(df: DataFrame) -> DataFrame:
 
     return df
 
+def map_column_values(df, column_name, mapping, new_column_name):
+    df = df.withColumn(new_column_name, col(column_name))
+    for k, v in mapping.items():
+        df = df.withColumn(new_column_name, when(col(column_name) == k, v).otherwise(col(new_column_name)))
+    return df
+
+

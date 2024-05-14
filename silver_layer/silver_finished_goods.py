@@ -23,14 +23,25 @@ df = spark.sql("SELECT * FROM supply_chain_bronze.finished_goods")
 
 # COMMAND ----------
 
+# ETL
 df = replace_newlines(df, "demandCategory")
 df = remove_duplicate_rows(df)
 df = convert_column_types(df)
+df = fill_empty_fields(df)
+df = df.withColumnRenamed("demandCategory", "Demand")
+df = df.withColumnRenamed("inventory", "Product_Inventory")
+
 
 # COMMAND ----------
 
 # Saving Silver Layer
 
 database = "supply_chain_silver"
-location = "/mnt/demo/silver/"
-table = "customers"
+location = "/mnt/demo/silver/" # add additional sub-location for this table
+table = "finished_goods"
+
+df.write.format("delta")\
+    .option("path",f"{location}+{table}")\
+    .mode("overwrite")\
+    .option("overwriteSchema", "true")\
+    .saveAsTable(f"{database}.{table}")

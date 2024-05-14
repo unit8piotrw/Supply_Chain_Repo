@@ -18,26 +18,16 @@ spark = SparkSession.builder.getOrCreate()
 # COMMAND ----------
 
 # Retrieving data from data catalog
-df = spark.sql("SELECT * FROM supply_chain_bronze.customers")
+finished_goods_df = spark.sql("SELECT * FROM supply_chain_silver.finished_goods")
+manufacturing_processes_df = spark.sql("SELECT * FROM supply_chain_silver.manufacturing_processes")
+manufacturing_process_parts_df = spark.sql("SELECT * FROM supply_chain_silver.manufacturing_process_parts")
+material_master_df = spark.sql("SELECT * FROM supply_chain_silver.material_master")
 
 # COMMAND ----------
 
-df = replace_newlines(df, "Address", "CompanyName")
-df = remove_duplicate_rows(df)
-df = convert_column_types(df)
-df = fill_empty_fields(df)
-
-
-def split_address_column(df: DataFrame, address_column: str) -> DataFrame:
-    # Split the address column into an array of parts
-    split_col = split(df[address_column], ' ')
-    df = df.withColumn('Street', concat_ws(' ', split_col[0], split_col[1])) \
-          . withColumn('ZipCode', split_col[size(split_col) - 2]) \
-          . withColumn('City', split_col[size(split_col) - 1])
-    df = df.drop("Address")
-    return df
-
-df = split_address_column(df, "Address")
+df = finished_goods_df.join(manufacturing_processes_df, "productID", "left")
+df = manufacturing_process_parts_df.join(df, on='ProcessID', how='right')
+df = df.join(material_master_df, on="MaterialID", how="left")
 df.show(10)
 
 # COMMAND ----------
@@ -46,7 +36,7 @@ df.show(10)
 
 database = "supply_chain_silver"
 location = "/mnt/demo/silver/" # add additional sub-location for this table
-table = "customers"
+table = "manufacturing_domain"
 
 df.write.format("delta")\
     .option("path",f"{location}+{table}")\

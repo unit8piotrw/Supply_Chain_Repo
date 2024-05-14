@@ -14,8 +14,6 @@ spark = SparkSession.builder.getOrCreate()
 # COMMAND ----------
 
 # MAGIC %run /Workspace/Repos/piotr.wojtaszewski@unit8.co/Supply_Chain_Repo/library/lib.py
-# MAGIC # This imports the library where the majority of functions are
-# MAGIC
 
 # COMMAND ----------
 
@@ -32,6 +30,7 @@ df = df.withColumn("max_delivery_date", to_date(df["max_delivery_date"]))
 df = df.drop("Date")
 df = convert_date_format(df)
 df = fill_empty_fields(df)
+df.show(10)
 
 # COMMAND ----------
 
