@@ -19,6 +19,7 @@ spark = SparkSession.builder.getOrCreate()
 
 # Retrieving data from data catalog
 df = spark.sql("SELECT * FROM supply_chain_bronze.customers")
+df.show()
 
 # COMMAND ----------
 

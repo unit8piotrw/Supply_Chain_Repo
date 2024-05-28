@@ -165,7 +165,7 @@ def create_customer_orders_df(num_orders, customers_df, finished_goods_df):
     def calculate_status(order_date):
         today = datetime.today()
         months_difference = (today.year - order_date.year) * 12 + today.month - order_date.month
-        probability_closed = min(40 + 20 * months_difference, 100)  # Ensuring it does not exceed 100%
+        probability_closed = min(10 + 30 * months_difference, 100)  # Ensuring it does not exceed 100%
         return 'closed' if random.random() < (probability_closed / 100.0) else 'open'
 
     def calculate_max_delivery_date(order_date):

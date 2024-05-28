@@ -27,7 +27,8 @@ material_master_df = spark.sql("SELECT * FROM supply_chain_silver.material_maste
 
 df = finished_goods_df.join(manufacturing_processes_df, "productID", "left")
 df = manufacturing_process_parts_df.join(df, on='ProcessID', how='right')
-df = df.join(material_master_df, on="MaterialID", how="left")
+df = df.join(material_master_df, on="MaterialID", how="left") # Some materials are dropped here because they are never used maybe it would make sense to limit meterial number to 20-30 instead of 100
+df = df.drop("Demand")
 df.show(10)
 
 # COMMAND ----------

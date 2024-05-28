@@ -21,6 +21,8 @@ spark = SparkSession.builder.getOrCreate()
 # Retrieving data from data catalog
 df = spark.sql("SELECT * FROM supply_chain_silver.demand_domain")
 df_inv = spark.sql("SELECT * FROM supply_chain_silver.manufacturing_domain")
+df_inv = df_inv.withColumn("Product_Inventory", when(col("Product_Inventory") - 50 < 0, 0).otherwise(col("Product_Inventory") - 50))
+
 
 # COMMAND ----------
 
@@ -32,13 +34,13 @@ df.printSchema()
 from pyspark.sql.functions import desc
 
 # Getting what is currently on order
-filtered_df = df.filter(df.status == "closed")
+filtered_df = df.filter(df.status == "open")
 ordered_df = filtered_df.groupBy("productID").agg(count("productID").alias("ProductsOrdered"))
 
 # Joining product_count_df with df_inv to get the Product_Inventory column
 joined_df = df_inv.join(ordered_df, "productID", "left")
 
-joined_df = joined_df.select("productID", "ProductsOrdered", "Product_Inventory")
+joined_df = joined_df.select("productID", "ProductsOrdered", "Product_Inventory").fillna(0)
 joined_df = joined_df.withColumn("Difference", col("Product_Inventory") - col("ProductsOrdered"))
 
 result_df = joined_df.select("productID", "ProductsOrdered", "Product_Inventory", "Difference")

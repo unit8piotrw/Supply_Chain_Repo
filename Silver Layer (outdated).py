@@ -17,10 +17,6 @@ spark = SparkSession.builder.getOrCreate()
 
 # COMMAND ----------
 
-start()
-
-# COMMAND ----------
-
 # Retrieving data from data catalog
 customers_df = spark.sql("SELECT * FROM supply_chain_bronze.customers")
 customer_order_df = spark.sql("SELECT * FROM supply_chain_bronze.customer_orders")

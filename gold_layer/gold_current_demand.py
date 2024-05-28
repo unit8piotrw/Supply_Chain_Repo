@@ -42,8 +42,9 @@ orders_by_product.show()
 df_with_month = df.withColumn("Month", month(df["OrderDate"]))
 date_distribution = df_with_month.groupBy("Month").count()
 
-# Print the result
-date_distribution.show()
+current_demand = df.withColumn("OrderYearMonth", col("OrderDate").substr(1, 7))
+
+current_demand.show()
 
 # COMMAND ----------
 
@@ -56,7 +57,7 @@ orders_by_status.show()
 
 database = "supply_chain_gold" # Azure
 location = "/mnt/demo/gold/"
-tables = ["orders_by_customer", "orders_by_product", "orders_by_month", "orders_by_status"]
+tables = ["orders_by_customer", "orders_by_product", "orders_by_month", "orders_by_status", "current_demand"]
 
 orders_by_customers.write.format("delta")\
     .option("path",f"{location}+{tables[0]}")\
@@ -81,3 +82,9 @@ orders_by_status.write.format("delta")\
     .mode("overwrite")\
     .option("overwriteSchema", "true")\
     .saveAsTable(f"{database}.{tables[3]}")
+
+current_demand.write.format("delta")\
+    .option("path",f"{location}+{tables[4]}")\
+    .mode("overwrite")\
+    .option("overwriteSchema", "true")\
+    .saveAsTable(f"{database}.{tables[4]}")
