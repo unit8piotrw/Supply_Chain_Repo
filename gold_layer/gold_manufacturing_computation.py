@@ -70,7 +70,7 @@ output = manufacture(df_jobs)
 
 # COMMAND ----------
 
-from pyspark.sql.functions import lag, greatest, sum, to_date, add_months, date_diff, current_date
+from pyspark.sql.functions import lag, greatest, sum, to_date, add_months, date_diff, current_date, expr
 from pyspark.sql import Window
 
 df_jobs = spark.sql("SELECT * FROM supply_chain_gold.manufacturing_job_list")
@@ -78,8 +78,12 @@ df_jobs = spark.sql("SELECT * FROM supply_chain_gold.manufacturing_job_list")
 
 def schedule_jobs(df_jobs, max_hours_day):
     # Define window
-    df_jobs = df_jobs.withColumn("OrderDateT", to_date(df_jobs["OrderYearMonth"], "yyyy-MM"))
-    df_jobs = df_jobs.withColumn("OrderDeadline", add_months(df_jobs["OrderDateT"], 3))
+
+    # Changed 2 lines
+    # df_jobs = df_jobs.withColumn("OrderDateT", to_date(df_jobs["OrderYearMonth"], "yyyy-MM"))
+    df_jobs = df_jobs.withColumn("OrderDeadline", add_months(df_jobs["OrderYearMonth"], 3))
+
+
     df_jobs = df_jobs.withColumn("CurrentDate", current_date())
 
     df_jobs = df_jobs.withColumn("DiffHours", date_diff(df_jobs["OrderDeadline"], df_jobs["CurrentDate"]) * max_hours_day)
@@ -91,12 +95,19 @@ def schedule_jobs(df_jobs, max_hours_day):
 
     alerts = df_jobs.filter(col("Running_Total") > col("DiffHours"))
     alerts = alerts.withColumn("ExpectedDelay",col("Running_Total") - col("DiffHours"))
-    alerts = alerts.select("ProductID", "OrderYearMonth", "Delta_produced", "FacilityID", "OrderDeadline", "ExpectedDelay")
+
+    delay_category_expr = "CASE "
+    for i in range(20, 220, 20):
+        delay_category_expr += f"WHEN ExpectedDelay <= {i} THEN '<{i}' "
+    delay_category_expr += "ELSE '200+' END"
+    alerts = alerts.withColumn("DelayCategory", expr(delay_category_expr))
+
+    alerts = alerts.select("ProductID", "OrderYearMonth", "Delta_produced", "FacilityID", "OrderDeadline", "ExpectedDelay", "DelayCategory")
     alerts = alerts.dropDuplicates()
     alerts = alerts.orderBy("FacilityID", "OrderYearMonth")
     return df_jobs, alerts
 
-df_jobs, alerts = schedule_jobs(df_jobs, max_hours_day=12)
+df_jobs, alerts = schedule_jobs(df_jobs, max_hours_day=8)
 
 df_jobs.show(100)
 

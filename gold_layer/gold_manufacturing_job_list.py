@@ -43,7 +43,8 @@ df_open = df_demand.filter(col("status") == "open")
 df_open.show(100)
 
 # Group by ProductID and OrderYearMonth and count the number of rows in each group
-orders_df = df_open.groupBy("ProductID", "OrderYearMonth").count().orderBy("productID")
+orders_df = df_open.groupBy("ProductID", "OrderDate").count().orderBy("productID")
+orders_df = orders_df.withColumnRenamed("OrderDate", "OrderYearMonth")
 orders_df.show(100)
 
 
