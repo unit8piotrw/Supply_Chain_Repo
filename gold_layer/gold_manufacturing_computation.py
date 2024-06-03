@@ -33,44 +33,7 @@ df_jobs.show(10)
 
 # COMMAND ----------
 
-# Defining manufacturing smulation function
-# We assume that the order of df_jobs is the order in which to execute the jobs in
-
-"""
-df_jobs = df_jobs.filter(col("FacilityID") == "Facility 2")
-df_jobs = df_jobs.sort(col("FacilityID"), col("OrderYearMonth"), col("ProcessPartID"))  
-
-
-def manufacture(df_jobs):
-    
-    current_time = {"Facility 1": 0, "Facility 2": 0, "Facility 3": 0, "Facility 4": 0}
-    output_data = []
-    # Plan: Split it by facility, start time at 0 and simply convert later
-    for row in df_jobs.collect():
-        # Calculate start time and end time
-        start_time = current_time[row["FacilityID"]]
-        end_time = start_time + (row["ProcessingTime"] * row["Delta_produced"])
-
-        # Updating current time for each facility
-        current_time[row["FacilityID"]] = end_time
-
-        # Create output row
-        output_row = (row["ProductID"], row["OrderYearMonth"], row["Delta_produced"], row["MaterialID"],
-                      row["ProcessPartID"], row["Req_Prod_Quant"], row["FacilityID"], start_time, end_time)
-        
-        output_data.append(output_row)
-
-    output_df = spark.createDataFrame(output_data, ["ProductID", "OrderYearMonth", "Delta_produced", "MaterialID",
-                                                    "ProcessPartID", "Req_Prod_Quant", "FacilityID", "StartTime", "EndTime"])
-    
-    return output_df
-
-output = manufacture(df_jobs)
-"""
-
-# COMMAND ----------
-
-from pyspark.sql.functions import lag, greatest, sum, to_date, add_months, date_diff, current_date
+from pyspark.sql.functions import lag, greatest, sum, to_date, add_months, date_diff, current_date, expr, lit, substring
 from pyspark.sql import Window
 
 df_jobs = spark.sql("SELECT * FROM supply_chain_gold.manufacturing_job_list")
@@ -78,25 +41,51 @@ df_jobs = spark.sql("SELECT * FROM supply_chain_gold.manufacturing_job_list")
 
 def schedule_jobs(df_jobs, max_hours_day):
     # Define window
-    df_jobs = df_jobs.withColumn("OrderDateT", to_date(df_jobs["OrderYearMonth"], "yyyy-MM"))
-    df_jobs = df_jobs.withColumn("OrderDeadline", add_months(df_jobs["OrderDateT"], 3))
+    df_jobs = df_jobs.withColumn("OrderDeadline", add_months(df_jobs["OrderYearMonth"], 3))
     df_jobs = df_jobs.withColumn("CurrentDate", current_date())
-
     df_jobs = df_jobs.withColumn("DiffHours", date_diff(df_jobs["OrderDeadline"], df_jobs["CurrentDate"]) * max_hours_day)
-    
     window = Window.partitionBy("FacilityID").orderBy("OrderYearMonth", "ProductID")
+
+    # Adding the cost of switching the product category being produced
+    # Calculating ProductCategories
+    df_jobs = df_jobs.withColumn("ProductCategory", substring(df_jobs.ProcessPartID, -1, 1))
+    df_jobs = df_jobs.withColumn('PreviousProductCat', lag('ProductCategory').over(window))
+    df_jobs = df_jobs.withColumn('PreviousProductCat', when(col("PreviousProductCat").isNull(), col("ProductCategory")).otherwise(col("PreviousProductCat")))
+
+    # Adding the cost to the processing times
     df_jobs = df_jobs.withColumn("TotalProcessingTime", col("ProcessingTime") * col("Delta_produced"))
+    df_jobs = df_jobs.withColumn('TotalProcessingTime', when(col("PreviousProductCat") == col("ProductCategory"), col("TotalProcessingTime")).otherwise(col("TotalProcessingTime")+1))
 
+    # Calculating total processing time and expected delays in each facility
     df_jobs = df_jobs.withColumn('Running_Total', sum('TotalProcessingTime').over(window))
-
     alerts = df_jobs.filter(col("Running_Total") > col("DiffHours"))
     alerts = alerts.withColumn("ExpectedDelay",col("Running_Total") - col("DiffHours"))
-    alerts = alerts.select("ProductID", "OrderYearMonth", "Delta_produced", "FacilityID", "OrderDeadline", "ExpectedDelay")
+
+    # Calculating the minimum and maximum values of the ExpectedDelay column
+    min_delay = alerts.agg({"ExpectedDelay": "min"}).collect()[0][0]
+    max_delay = alerts.agg({"ExpectedDelay": "max"}).collect()[0][0]
+
+    # Calculating the breakpoints for the delay categories
+    range_20 = min_delay + 0.2 * (max_delay - min_delay)
+    range_40 = min_delay + 0.4 * (max_delay - min_delay)
+    range_60 = min_delay + 0.6 * (max_delay - min_delay)
+    range_80 = min_delay + 0.8 * (max_delay - min_delay)
+
+    alerts = alerts.withColumn(
+        "DelayCategory",
+        when(col("ExpectedDelay") <= range_20, lit("Category_1"))
+        .when((col("ExpectedDelay") > range_20) & (col("ExpectedDelay") <= range_40), lit("Category_2"))
+        .when((col("ExpectedDelay") > range_40) & (col("ExpectedDelay") <= range_60), lit("Category_3"))
+        .when((col("ExpectedDelay") > range_60) & (col("ExpectedDelay") <= range_80), lit("Category_4"))
+        .otherwise(lit("Category_5"))
+    )
+
+    alerts = alerts.select("ProductID", "OrderYearMonth", "Delta_produced", "FacilityID", "OrderDeadline", "ExpectedDelay", "DelayCategory")
     alerts = alerts.dropDuplicates()
     alerts = alerts.orderBy("FacilityID", "OrderYearMonth")
     return df_jobs, alerts
 
-df_jobs, alerts = schedule_jobs(df_jobs, max_hours_day=12)
+df_jobs, alerts = schedule_jobs(df_jobs, max_hours_day=8)
 
 df_jobs.show(100)
 
